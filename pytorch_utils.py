@@ -6,6 +6,8 @@ import torchvision
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as F
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, precision_score, recall_score
+import matplotlib.pyplot as plt
+import math
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -38,8 +40,7 @@ NORM_MEAN = [0.485, 0.456, 0.406]
 NORM_STD = [0.229, 0.224, 0.225]
 
 
-def batch2image(dataloader):
-    images, targets = next(iter(dataloader))
+def make_image_label_grid(images, labels, class_names):
     channels = images.shape[1]
     if channels not in (3, 1):
         raise ValueError("Images must have 1 or 3 channels")
@@ -47,9 +48,38 @@ def batch2image(dataloader):
     std = NORM_STD if channels == 3 else [sum(NORM_STD) / 3]
     mean = torch.tensor(mean)
     std = torch.tensor(std)
+    mean = (-mean / std).tolist()
+    std = (1.0 / std).tolist()
     img_grid = torchvision.utils.make_grid(images)
-    img_grid = F.normalize(img_grid, mean=(-mean / std).tolist(), std=(1.0 / std).tolist())
+    img_grid = F.normalize(img_grid, mean=mean, std=std)
     return img_grid
+
+
+def make_image_label_figure(images, labels, class_names):
+    channels = images.shape[1]
+    if channels not in (3, 1):
+        raise ValueError("Images must have 1 or 3 channels")
+    mean = NORM_MEAN if channels == 3 else [sum(NORM_MEAN) / 3]
+    std = NORM_STD if channels == 3 else [sum(NORM_STD) / 3]
+    mean = torch.tensor(mean)
+    std = torch.tensor(std)
+    mean = (-mean / std).tolist()
+    std = (1.0 / std).tolist()
+    n = int(math.sqrt(len(images)))
+    figure = plt.figure(figsize=(n, n))
+    figure.subplots_adjust(hspace=0.4, wspace=0.4)
+    for i in range(n*n):
+        image, label = images[i], labels[i]
+        image = F.normalize(image, mean=mean, std=std)
+        image = image.permute(1, 2, 0)
+        image = torch.squeeze(image)
+        image = (image * 255).int()
+        plt.subplot(n, n, i + 1, title=class_names[label])
+        plt.xticks([])
+        plt.yticks([])
+        plt.grid(False)
+        plt.imshow(image, cmap='gray' if channels == 1 else None)
+    return figure
 
 
 class Transforms(transforms.Compose):

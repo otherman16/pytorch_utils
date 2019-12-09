@@ -1,4 +1,4 @@
-from pytorch_utils import PyTorchTrainer, Transforms, batch2image
+from pytorch_utils import PyTorchTrainer, Transforms, make_image_label_figure, make_image_label_grid
 
 from vgg import VGG
 from mobilenet import MobileNet, MobileNetV2
@@ -22,23 +22,23 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 def main():
-    origin_channels = 1
+    origin_channels = 3
     in_channels = 3
     size = (64, 64)
     batch_size = 256
-    classes = 20
+    classes = 10
     root = '../../datasets'
 
     transform_train = Transforms(in_channels=origin_channels, out_channels=in_channels, size=size, train=True,
                                  horizontal_flip=False)
     transform_val = Transforms(in_channels=origin_channels, out_channels=in_channels, size=size)
 
-    trainset = MNIST_DATASET(root, train=True, transform=transform_train, download=False)
-    valset = MNIST_DATASET(root, train=False, transform=transform_val, download=False)
+    # trainset = MNIST_DATASET(root, train=True, transform=transform_train, download=False)
+    # valset = MNIST_DATASET(root, train=False, transform=transform_val, download=False)
     # trainset = FASHION_MNIST_DATASET(root, train=True, transform=transform_train, download=False)
     # valset = FASHION_MNIST_DATASET(root, train=False, transform=transform_val, download=False)
-    # trainset = CIFAR10_DATASET(root, train=True, transform=transform_train, download=False)
-    # valset = CIFAR10_DATASET(root, train=False, transform=transform_val, download=False)
+    trainset = CIFAR10_DATASET(root, train=True, transform=transform_train, download=False)
+    valset = CIFAR10_DATASET(root, train=False, transform=transform_val, download=False)
     # trainset = VOC2012_CLASSIFICATION_DATASET(root, train=True, transform=transform_train, download=False)
     # valset = VOC2012_CLASSIFICATION_DATASET(root, train=False, transform=transform_val, download=False)
 
@@ -84,8 +84,12 @@ def main():
     logdir = os.path.join("logs", datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     # os.makedirs(logdir)
     logger = SummaryWriter(logdir)
-    img_grid = batch2image(trainloader)
-    logger.add_image('Images', img_grid)
+    images, labels = next(iter(trainloader))
+    fig = make_image_label_figure(images, labels, class_names=CIFAR10_CLASSES)
+    grid = make_image_label_grid(images, labels, class_names=CIFAR10_CLASSES)
+    logger.add_figure('fig', fig)
+    logger.add_image('grid', grid)
+    # logger.add_graph(net)
     trainer = PyTorchTrainer(logger=logger, path=logdir, device=device)
     trainer.train(net, optimizer, criterion, trainloader, valloader, scheduler=None, num_epochs=20)
 

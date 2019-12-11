@@ -4,6 +4,7 @@ from vgg import VGG
 from mobilenet import MobileNet, MobileNetV2
 from alexnet import AlexNet
 from resnet import ResNet
+from mnistnet import MNISTNet
 
 from mnist_utils import MNIST_CLASSES, MNIST_DATASET
 from fashion_mnist_utils import FASHION_MNIST_CLASSES, FASHION_MNIST_DATASET
@@ -22,23 +23,23 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 def main():
-    origin_channels = 3
-    in_channels = 3
-    size = (64, 64)
-    batch_size = 256
+    origin_channels = 1
+    in_channels = 1
+    size = (28, 28)
+    batch_size = 512
     classes = 10
     root = '../../datasets'
 
     transform_train = Transforms(in_channels=origin_channels, out_channels=in_channels, size=size, train=True,
-                                 horizontal_flip=False)
+                                 random_affine=True, random_erasing=False)
     transform_val = Transforms(in_channels=origin_channels, out_channels=in_channels, size=size)
 
-    # trainset = MNIST_DATASET(root, train=True, transform=transform_train, download=False)
-    # valset = MNIST_DATASET(root, train=False, transform=transform_val, download=False)
+    trainset = MNIST_DATASET(root, train=True, transform=transform_train, download=False)
+    valset = MNIST_DATASET(root, train=False, transform=transform_val, download=False)
     # trainset = FASHION_MNIST_DATASET(root, train=True, transform=transform_train, download=False)
     # valset = FASHION_MNIST_DATASET(root, train=False, transform=transform_val, download=False)
-    trainset = CIFAR10_DATASET(root, train=True, transform=transform_train, download=False)
-    valset = CIFAR10_DATASET(root, train=False, transform=transform_val, download=False)
+    # trainset = CIFAR10_DATASET(root, train=True, transform=transform_train, download=False)
+    # valset = CIFAR10_DATASET(root, train=False, transform=transform_val, download=False)
     # trainset = VOC2012_CLASSIFICATION_DATASET(root, train=True, transform=transform_train, download=False)
     # valset = VOC2012_CLASSIFICATION_DATASET(root, train=False, transform=transform_val, download=False)
 
@@ -52,14 +53,15 @@ def main():
     # net = MobileNet(width_multiplier=1.0, in_channels=in_channels, classes=classes)
     # net = MobileNetV2(width_multiplier=1.0, in_channels=in_channels, classes=classes)
     # net = ResNet(in_channels=in_channels, classes=classes, cfg='18')
+    net = MNISTNet(in_channels=in_channels, classes=classes)
 
-    net = torchvision.models.resnet18(pretrained=True)
-    for param in net.parameters():
-        param.requires_grad = False
-    net.fc = nn.Sequential(
-        nn.Dropout(0.2),
-        nn.Linear(net.fc.in_features, classes)
-    )
+    # net = torchvision.models.resnet18(pretrained=True)
+    # for param in net.parameters():
+    #     param.requires_grad = False
+    # net.fc = nn.Sequential(
+    #     nn.Dropout(0.2),
+    #     nn.Linear(net.fc.in_features, classes)
+    # )
 
     # net = torchvision.models.mobilenet_v2(pretrained=True)
     # for param in net.parameters():
@@ -73,25 +75,48 @@ def main():
 
     net = net.to(torch.device(device))
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(net.parameters(), lr=0.0001, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(net.parameters(), lr=0.002)
 
     # optimizer = optim.SGD(net.parameters(), lr=0.045, momentum=0.9, weight_decay=0.00004)
-    scheduler = StepLR(optimizer, step_size=1, gamma=0.95)
-    # scheduler = MultiStepLR(optimizer, milestones=[2, 5, 10, 15], gamma=0.1)
-    # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=2, verbose=True,
-    #                               threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08)
+    # scheduler = StepLR(optimizer, step_size=5, gamma=0.5)
+    # optimizer = torch.optim.RMSprop(net.parameters(), lr=0.002, alpha=0.9, eps=1e-07, momentum=0.1, centered=True)
+    scheduler = ReduceLROnPlateau(optimizer, factor=0.25, patience=2, verbose=True, mode='min', threshold=0.0001,
+                                  cooldown=0, min_lr=0.00001)
 
     logdir = os.path.join("logs", datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     # os.makedirs(logdir)
     logger = SummaryWriter(logdir)
     images, labels = next(iter(trainloader))
-    fig = make_image_label_figure(images, labels, class_names=CIFAR10_CLASSES)
-    grid = make_image_label_grid(images, labels, class_names=CIFAR10_CLASSES)
-    logger.add_figure('fig', fig)
-    logger.add_image('grid', grid)
-    # logger.add_graph(net)
+    fig = make_image_label_figure(images, labels, class_names=MNIST_CLASSES)
+    logger.add_figure('Train Images', fig)
     trainer = PyTorchTrainer(logger=logger, path=logdir, device=device)
-    trainer.train(net, optimizer, criterion, trainloader, valloader, scheduler=None, num_epochs=20)
+    trainer.train(net, optimizer, criterion, trainloader, valloader, scheduler=scheduler, num_epochs=60)
+
+    net.eval()
+    for param in net.parameters():
+        param.requires_grad = False
+
+    bad_images = []
+    bad_predictions = []
+    for images, targets in valloader:
+        images = images.to(torch.device(device))
+        targets = targets.to(torch.device(device))
+        outputs = net.forward(images)
+        predictions = outputs.argmax(dim=1).data
+        for image, target, prediction in zip(images, targets, predictions):
+            if target != prediction:
+                bad_images.append(image.cpu())
+                bad_predictions.append(prediction.cpu())
+
+    bad_images = torch.stack(bad_images)
+    fig = make_image_label_figure(bad_images, bad_predictions, class_names=MNIST_CLASSES)
+    logger.add_figure('Bad predictions', fig)
+
+    while True:
+        print('done')
+        k = input()
+        if k == 'q':
+            break
 
 
 if __name__ == "__main__":

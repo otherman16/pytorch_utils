@@ -84,8 +84,8 @@ def make_image_label_figure(images, labels, class_names):
 
 class Transforms(transforms.Compose):
 
-    def __init__(self, in_channels=3, out_channels=3, size=224, train=False, random_crop=False, horizontal_flip=False,
-                 color_jitter=False):
+    def __init__(self, in_channels=3, out_channels=3, size=224, train=False, random_crop=False, random_affine=False,
+                 horizontal_flip=False, color_jitter=False, random_erasing=False):
         if out_channels not in (3, 1) or in_channels not in (3, 1):
             raise ValueError("Images must have 1 or 3 channels")
         mean = NORM_MEAN if out_channels == 3 else [sum(NORM_MEAN) / 3]
@@ -94,6 +94,9 @@ class Transforms(transforms.Compose):
         if in_channels != out_channels:
             transforms_list.append(transforms.Grayscale(out_channels))
         if train:
+            if random_affine:
+                transforms_list.append(transforms.RandomAffine(degrees=10.0, translate=(0.25, 0.25),
+                                                               shear=(-10, 10, -10, 10)))
             if random_crop:
                 transforms_list.append(transforms.RandomResizedCrop(size, scale=(0.9, 1.1), ratio=(0.75, 1.33)))
             else:
@@ -105,10 +108,10 @@ class Transforms(transforms.Compose):
                                                               saturation=(0.75, 1.5), hue=(-0.1, 0.1)))
         else:
             transforms_list.append(transforms.Resize(size))
-        transforms_list.extend([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std)
-        ])
+        transforms_list.append(transforms.ToTensor())
+        if train and random_erasing:
+            transforms_list.append(transforms.RandomErasing(p=0.2, scale=(0.02, 0.2), ratio=(0.3, 3.3), value=0))
+        transforms_list.append(transforms.Normalize(mean=mean, std=std))
         super(Transforms, self).__init__(transforms_list)
 
 
@@ -249,7 +252,7 @@ class PyTorchTrainer(object):
             self.save_model(model, epoch)
             # Make scheduler step
             if scheduler:
-                scheduler.step(epoch=epoch)
+                scheduler.step(train_loss, epoch=epoch)
         # Timings
         self.train_timer.tock()
         # Print log

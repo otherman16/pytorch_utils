@@ -1,14 +1,15 @@
 import os
+import math
+import random
 import torch
 import torchvision
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as F
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, precision_score, recall_score
 import matplotlib.pyplot as plt
-import math
-from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-import random
+
+from tqdm.autonotebook import tqdm
 
 
 METRICS = {
@@ -16,22 +17,22 @@ METRICS = {
         'f': accuracy_score,
         'args': {}
     },
-    'balanced_accuracy': {
-        'f': balanced_accuracy_score,
-        'args': {}
-    },
-    'f1': {
-        'f': f1_score,
-        'args': {'average': 'weighted'}
-    },
-    'precision': {
-        'f': precision_score,
-        'args': {'average': 'weighted'}
-    },
-    'recall': {
-        'f': recall_score,
-        'args': {'average': 'weighted'}
-    }
+    # 'balanced_accuracy': {
+    #     'f': balanced_accuracy_score,
+    #     'args': {}
+    # },
+    # 'f1': {
+    #     'f': f1_score,
+    #     'args': {'average': 'weighted'}
+    # },
+    # 'precision': {
+    #     'f': precision_score,
+    #     'args': {'average': 'weighted'}
+    # },
+    # 'recall': {
+    #     'f': recall_score,
+    #     'args': {'average': 'weighted'}
+    # }
 }
 
 
@@ -39,7 +40,7 @@ NORM_MEAN = [0.485, 0.456, 0.406]
 NORM_STD = [0.229, 0.224, 0.225]
 
 
-def make_image_label_grid(images, labels, class_names):
+def make_image_label_grid(images, labels=None, class_names=None):
     channels = images.shape[1]
     if channels not in (3, 1):
         raise ValueError("Images must have 1 or 3 channels")
@@ -54,7 +55,7 @@ def make_image_label_grid(images, labels, class_names):
     return img_grid
 
 
-def make_image_label_figure(images, labels, class_names):
+def make_image_label_figure(images, labels=None, class_names=None):
     channels = images.shape[1]
     if channels not in (3, 1):
         raise ValueError("Images must have 1 or 3 channels")
@@ -68,12 +69,12 @@ def make_image_label_figure(images, labels, class_names):
     figure = plt.figure(figsize=(n, n))
     figure.subplots_adjust(hspace=0.4, wspace=0.4)
     for i in range(n*n):
-        image, label = images[i], labels[i]
+        image, label = images[i], (0 if labels is None else labels[i])
         image = F.normalize(image, mean=mean, std=std)
         image = image.permute(1, 2, 0)
         image = torch.squeeze(image)
         image = (image * 255).int()
-        plt.subplot(n, n, i + 1, title=class_names[label])
+        plt.subplot(n, n, i + 1, title='NA' if class_names is None else class_names[label])
         plt.xticks([])
         plt.yticks([])
         plt.grid(False)
@@ -130,25 +131,26 @@ class TrainTransforms(transforms.Compose):
 
 class TrainerProgressBar(tqdm):
 
-    def __init__(self, desc=None, unit='it', position=None, bar_width=10):
+    def __init__(self, desc=None, total=10, unit='it', position=None):
         super(TrainerProgressBar, self).__init__(
-            desc=desc, total=None, leave=True,
-            file=None, ncols=None, mininterval=0.1, maxinterval=10.0,
-            miniters=None, ascii=None, disable=False, unit=unit,
-            unit_scale=False, dynamic_ncols=False, smoothing=0.3,
-            bar_format='{l_bar}{bar:' + str(bar_width) + '}{r_bar}', initial=0, position=position, postfix=None,
-            unit_divisor=1000, write_bytes=None, lock_args=None,
-            gui=False
+            desc=desc, total=total, leave=True, unit=unit, position=position, dynamic_ncols=True
         )
 
     def reset(self, total=None, desc=None, ordered_dict=None):
-        super(TrainerProgressBar, self).reset(total)
+        # super(TrainerProgressBar, self).reset(total)
+        self.last_print_n = self.n = 0
+        self.last_print_t = self.start_t = self._time()
+        if total is not None:
+            self.total = total
+        super(TrainerProgressBar, self).refresh()
         if desc is not None:
             super(TrainerProgressBar, self).set_description(desc)
         if ordered_dict is not None:
             super(TrainerProgressBar, self).set_postfix(ordered_dict)
 
-    def update(self, ordered_dict=None, n=1):
+    def update(self, desc=None, ordered_dict=None, n=1):
+        if desc is not None:
+            super(TrainerProgressBar, self).set_description(desc)
         if ordered_dict is not None:
             super(TrainerProgressBar, self).set_postfix(ordered_dict)
         super(TrainerProgressBar, self).update(n)
@@ -217,9 +219,11 @@ class PyTorchTrainer(object):
         print(f"== Validate batches:    {len(val_data_loader):6d}")
         print(f"===========================================================================")
         # Initialize progress bars
-        self.train_pb = TrainerProgressBar(desc='== Training Summary', unit='epoch', position=0, bar_width=20)
-        self.epoch_train_pb = TrainerProgressBar(desc=f'== Epoch {1:4d} Train', unit='batch', position=1, bar_width=20)
-        self.epoch_val_pb = TrainerProgressBar(desc=f'== Epoch {1:4d}   Val', unit='batch', position=2, bar_width=20)
+        self.train_pb = TrainerProgressBar(desc=f'== Epoch {1}', total=epochs, unit='epoch', position=0)
+        self.epoch_train_pb = TrainerProgressBar(desc=f'== Train {1}', total=len(train_data_loader),
+                                                 unit='batch', position=1)
+        self.epoch_val_pb = TrainerProgressBar(desc=f'== Val {1}', total=len(val_data_loader), unit='batch',
+                                               position=2)
         # Reset progress bars
         self.train_pb.reset(total=epochs)
         self.epoch_train_pb.reset(total=len(train_data_loader))
@@ -240,11 +244,12 @@ class PyTorchTrainer(object):
                 else:
                     scheduler.step(epoch=epoch)
             # Update progress bar
-            metrics_dict = {'lr': optimizer.param_groups[0]['lr'], 'loss': {'train': train_loss, 'val': val_loss}}
+            metrics_dict = {'lr': optimizer.param_groups[0]['lr'],
+                            'loss': {'train': round(train_loss, 4), 'val': round(val_loss, 4)}}
             metrics_dict.update(self.metrics_dict(predictions, targets))
             if self.epoch_callback:
                 self.epoch_callback(epoch, epochs, predictions, targets, inputs, metrics_dict)
-            self.train_pb.update(ordered_dict=metrics_dict)
+            self.train_pb.update(desc=f'== Epoch {epoch+1}', ordered_dict=metrics_dict)
         # Close progress bars
         self.train_pb.close()
         self.epoch_train_pb.close()
@@ -266,9 +271,9 @@ class PyTorchTrainer(object):
         batches = len(data_loader)
         # Reset progress bar
         if train:
-            self.epoch_train_pb.reset(batches, f"== Epoch {epoch+1:4d} Train")
+            self.epoch_train_pb.reset(batches, f"== Train {epoch+1}")
         else:
-            self.epoch_val_pb.reset(batches, f"== Epoch {epoch+1:4d}   Val")
+            self.epoch_val_pb.reset(batches, f"== Val {epoch+1}")
         for batch_i, data in enumerate(data_loader, 1):
             # Forward batch
             loss_value, predictions, targets, inputs = self.forward_batch(model, optimizer, loss_criterion, data,

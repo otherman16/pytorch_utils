@@ -23,28 +23,33 @@ import torch.optim.lr_scheduler as lr_scheduler
 
 
 def main():
-    origin_channels = 3
-    in_channels = 3
-    size = (224, 224)
-    batch_size = 100
-    classes = 20
+    origin_channels = 1
+    in_channels = 1
+    size = (28, 28)
+    batch_size = 500
+    classes = 10
+    class_names = MNIST_CLASSES
     root = '../../datasets'
 
     transform_train = TrainTransforms(in_channels=origin_channels, out_channels=in_channels, size=size,
-                                      horizontal_flip=True, random_affine=True, random_erasing=True)
+                                      horizontal_flip=False, random_affine=True, random_erasing=True)
     transform_val = Transforms(in_channels=origin_channels, out_channels=in_channels, size=size)
+    transform_test = Transforms(in_channels=origin_channels, out_channels=in_channels, size=size)
 
-    # trainset = MNIST_DATASET(root, train=True, transform=transform_train, download=False)
-    # valset = MNIST_DATASET(root, train=False, transform=transform_val, download=False)
+    trainset = MNIST_DATASET(root, train=True, transform=transform_train, download=False)
+    valset = MNIST_DATASET(root, train=False, transform=transform_val, download=False)
+    testset = MNIST_DATASET(root, train=False, transform=transform_test, download=False)
     # trainset = FASHION_MNIST_DATASET(root, train=True, transform=transform_train, download=False)
     # valset = FASHION_MNIST_DATASET(root, train=False, transform=transform_val, download=False)
     # trainset = CIFAR10_DATASET(root, train=True, transform=transform_train, download=False)
     # valset = CIFAR10_DATASET(root, train=False, transform=transform_val, download=False)
-    trainset = VOC2012_CLASSIFICATION_DATASET(root, train=True, transform=transform_train, download=False)
-    valset = VOC2012_CLASSIFICATION_DATASET(root, train=False, transform=transform_val, download=False)
+    # trainset = VOC2012_CLASSIFICATION_DATASET(root, train=True, transform=transform_train, download=False)
+    # valset = VOC2012_CLASSIFICATION_DATASET(root, train=False, transform=transform_val, download=False)
+    # testset = VOC2012_CLASSIFICATION_DATASET(root, train=False, transform=transform_test, download=False)
 
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=4)
     valloader = torch.utils.data.DataLoader(valset, batch_size=batch_size, shuffle=False, num_workers=4)
+    testloader = torch.utils.data.DataLoader(valset, batch_size=batch_size, shuffle=True, num_workers=4)
 
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
@@ -53,8 +58,8 @@ def main():
     # net = MobileNet(width_multiplier=1.0, in_channels=in_channels, classes=classes)
     # net = MobileNetV2(width_multiplier=1.0, in_channels=in_channels, classes=classes)
     # net = ResNet(in_channels=in_channels, classes=classes, cfg='18')
-    # net = MNISTNet(in_channels=in_channels, classes=classes)
-    net = GoogleNet(in_channels=in_channels, classes=classes)
+    net = MNISTNet(in_channels=in_channels, classes=classes)
+    # net = GoogleNet(in_channels=in_channels, classes=classes)
 
     # net = torchvision.models.resnet18(pretrained=True)
     # for param in net.parameters():
@@ -82,7 +87,7 @@ def main():
 
     logdir = os.path.join("logs", datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     # os.makedirs(logdir)
-    logger = TensorBoardLogger(logdir, class_names=MNIST_CLASSES)
+    logger = TensorBoardLogger(logdir, class_names=class_names, testloader=testloader, device=device)
     trainer = PyTorchTrainer(device=device, epoch_callback=logger.epoch_callback, batch_callback=logger.batch_callback)
     trainer.train(net, optimizer, criterion, trainloader, valloader, logdir, scheduler=scheduler, epochs=10)
 

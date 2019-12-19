@@ -159,39 +159,45 @@ class TrainerProgressBar(tqdm):
 class TensorBoardLogger(SummaryWriter):
 
     def __init__(self, log_dir=None, comment='', purge_step=None, max_queue=10,
-                 flush_secs=120, filename_suffix='', class_names=None):
+                 flush_secs=120, filename_suffix='', class_names=None, testloader=None, device=None):
         super(TensorBoardLogger, self).__init__(log_dir=log_dir, comment=comment, purge_step=purge_step,
                                                 max_queue=max_queue, flush_secs=flush_secs,
                                                 filename_suffix=filename_suffix)
         self.class_names = class_names
+        self.testloader = testloader
+        self.device = torch.device(device) if device else torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    def epoch_callback(self, epoch, epochs, predictions, targets, inputs, metrics_dict):
-        for metric_name, metric_value in metrics_dict.items():
-            if isinstance(metric_value, dict):
-                super(TensorBoardLogger, self).add_scalars(f"epoch/{metric_name}", metric_value, epoch)
-            else:
-                super(TensorBoardLogger, self).add_scalar(f"epoch/{metric_name}", metric_value, epoch)
+    def epoch_callback(self, net, epoch, lr, train_loss, val_loss, train_metrics_dict, val_metrics_dict):
+        super(TensorBoardLogger, self).add_scalar(f"epoch/lr", lr, epoch)
+        super(TensorBoardLogger, self).add_scalars(f"epoch/loss", {'train': train_loss, 'val': val_loss}, epoch)
+        for metric_name in train_metrics_dict:
+            super(TensorBoardLogger, self).add_scalars(f"epoch/{metric_name}",
+                                                       {'train': train_metrics_dict[metric_name],
+                                                        'val': val_metrics_dict[metric_name]}, epoch)
+        if self.testloader:
+            inputs, targets = next(iter(self.testloader))
+            _inputs = inputs.to(self.device)
+            predictions = net.forward(_inputs).argmax(dim=1).data.cpu()
             start = random.randrange(0, len(targets)-9)
             stop = start + 9
             super(TensorBoardLogger, self).add_figure(
-                'examples/real', make_image_label_figure(inputs[start:stop],
-                                                         targets[start:stop],
-                                                         self.class_names)
+                'examples/real', make_image_label_figure(inputs[start:stop], targets[start:stop], self.class_names)
             )
             super(TensorBoardLogger, self).add_figure(
-                'examples/predicted', make_image_label_figure(inputs[start:stop],
-                                                              predictions[start:stop],
+                'examples/predicted', make_image_label_figure(inputs[start:stop], predictions[start:stop],
                                                               self.class_names)
             )
 
-    def batch_callback(self, train, epoch, batch, batches, predictions, targets, inputs, metrics_dict):
+    def batch_callback(self, train, epoch, batch, batches, loss, metrics_dict):
+        section = 'train_batch' if train else 'val_batch'
+        super(TensorBoardLogger, self).add_scalar(f"{section}/loss", loss, batch + epoch * batches)
         for metric_name, metric_value in metrics_dict.items():
             if isinstance(metric_value, dict):
-                super(TensorBoardLogger, self).add_scalars(f"{'train_batch' if train else 'val_batch'}/{metric_name}",
-                                                           metric_value, batch + epoch * batches)
+                super(TensorBoardLogger, self).add_scalars(f"{section}/{metric_name}", metric_value,
+                                                           batch + epoch * batches)
             else:
-                super(TensorBoardLogger, self).add_scalar(f"{'train_batch' if train else 'val_batch'}/{metric_name}",
-                                                          metric_value, batch + epoch * batches)
+                super(TensorBoardLogger, self).add_scalar(f"{section}/{metric_name}", metric_value,
+                                                          batch + epoch * batches)
 
 
 class PyTorchTrainer(object):
@@ -230,11 +236,11 @@ class PyTorchTrainer(object):
         self.epoch_val_pb.reset(total=len(val_data_loader))
         for epoch in range(epochs):
             # Train batches
-            train_loss, predictions, targets, inputs = self.forward_batches(model, optimizer, loss_criterion,
-                                                                            train_data_loader, epoch, train=True)
+            train_loss, train_metrics_dict = self.forward_batches(model, optimizer, loss_criterion,
+                                                                  train_data_loader, epoch, train=True)
             # Val batches
-            val_loss, predictions, targets, inputs = self.forward_batches(model, optimizer, loss_criterion,
-                                                                          val_data_loader, epoch, train=False)
+            val_loss, val_metrics_dict = self.forward_batches(model, optimizer, loss_criterion,
+                                                              val_data_loader, epoch, train=False)
             # Save model
             torch.save(model.state_dict(), os.path.join(models_path, f"model_epoch_{epoch+1}.pt"))
             # Make scheduler step
@@ -244,11 +250,14 @@ class PyTorchTrainer(object):
                 else:
                     scheduler.step(epoch=epoch)
             # Update progress bar
-            metrics_dict = {'lr': optimizer.param_groups[0]['lr'],
-                            'loss': {'train': round(train_loss, 4), 'val': round(val_loss, 4)}}
-            metrics_dict.update(self.metrics_dict(predictions, targets))
+            lr = optimizer.param_groups[0]['lr']
             if self.epoch_callback:
-                self.epoch_callback(epoch, epochs, predictions, targets, inputs, metrics_dict)
+                self.epoch_callback(model, epoch, lr, train_loss, val_loss, train_metrics_dict, val_metrics_dict)
+            metrics_dict = {'lr': lr}
+            for metric_name in train_metrics_dict:
+                metrics_dict[f"train_{metric_name}"] = train_metrics_dict[metric_name]
+                metrics_dict[f"val_{metric_name}"] = val_metrics_dict[metric_name]
+            metrics_dict.update({'train_loss': train_loss, 'val_loss': val_loss})
             self.train_pb.update(desc=f'== Epoch {epoch+1}', ordered_dict=metrics_dict)
         # Close progress bars
         self.train_pb.close()
@@ -265,9 +274,7 @@ class PyTorchTrainer(object):
             model.eval()
         # Preset variables
         avg_loss_value = 0
-        all_predictions = None
-        all_targets = None
-        all_inputs = None
+        avg_metrics_dict = None
         batches = len(data_loader)
         # Reset progress bar
         if train:
@@ -276,37 +283,41 @@ class PyTorchTrainer(object):
             self.epoch_val_pb.reset(batches, f"== Val {epoch+1}")
         for batch_i, data in enumerate(data_loader, 1):
             # Forward batch
-            loss_value, predictions, targets, inputs = self.forward_batch(model, optimizer, loss_criterion, data,
-                                                                          train=train)
+            loss_value, predictions, targets = self.forward_batch(model, optimizer, loss_criterion, data,
+                                                                  train=train)
+            metrics_dict = self.metrics_dict(predictions, targets)
             # Update variables
             avg_loss_value += loss_value
-            all_predictions = predictions if all_predictions is None else torch.cat((all_predictions, predictions))
-            all_targets = targets if all_targets is None else torch.cat((all_targets, targets))
-            all_inputs = inputs if all_inputs is None else torch.cat((all_inputs, inputs))
+            if avg_metrics_dict is None:
+                avg_metrics_dict = metrics_dict.copy()
+            else:
+                for metric_name in avg_metrics_dict:
+                    avg_metrics_dict[metric_name] += metrics_dict[metric_name]
             # Update progress bar
-            metrics_dict = {'lr': optimizer.param_groups[0]['lr'], 'loss': avg_loss_value/batch_i}
-            metrics_dict.update(self.metrics_dict(all_predictions, all_targets))
             if self.batch_callback:
-                self.batch_callback(train, epoch, batch_i, batches, predictions, targets, inputs, metrics_dict)
+                self.batch_callback(train, epoch, batch_i, batches, loss_value, metrics_dict)
+            metrics_dict.update({'loss': avg_loss_value/batch_i})
             if train:
                 self.epoch_train_pb.update(ordered_dict=metrics_dict)
             else:
                 self.epoch_val_pb.update(ordered_dict=metrics_dict)
         # Update variables
         avg_loss_value /= batches
+        for metric_name in avg_metrics_dict:
+            avg_metrics_dict[metric_name] /= batches
         # Return
-        return avg_loss_value, all_predictions, all_targets, all_inputs
+        return avg_loss_value, avg_metrics_dict
 
     def forward_batch(self, model, optimizer, loss_criterion, batch_data, train=True):
         # Get Inputs and Targets and put them to device
         inputs, targets = batch_data
-        inputs = inputs.to(self.device)
-        targets = targets.to(self.device)
+        _inputs = inputs.to(self.device)
+        _targets = targets.to(self.device)
         with torch.set_grad_enabled(train):
             # Forward model to get outputs
-            outputs = model.forward(inputs)
+            _outputs = model.forward(_inputs)
             # Calculate Loss Criterion
-            loss = loss_criterion(outputs, targets)
+            loss = loss_criterion(_outputs, _targets)
         if train:
             # Zero optimizer gradients
             optimizer.zero_grad()
@@ -316,10 +327,9 @@ class PyTorchTrainer(object):
             optimizer.step()
         # Variables
         loss_value = loss.item()
-        predictions = outputs.argmax(dim=1).data.cpu()
-        targets = targets.data.cpu()
-        inputs = inputs.data.cpu()
-        return loss_value, predictions, targets, inputs
+        predictions = _outputs.argmax(dim=1).data.cpu()
+        targets = targets.data
+        return loss_value, predictions, targets
 
     def metrics_dict(self, predictions, targets):
         d = {}

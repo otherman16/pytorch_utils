@@ -69,21 +69,24 @@ class ResidualBlock(nn.Module):
 class ResidualBottleneckBlock(nn.Module):
     expansion = 4
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, stride):
         super(ResidualBottleneckBlock, self).__init__()
-        self.res_connection = in_channels == out_channels
+        self.need_downsample = in_channels != out_channels*self.expansion
+
+        if self.need_downsample:
+            self.downsample = Conv2dBN(in_channels, out_channels*self.expansion, kernel_size=1, stride=stride, bias=False)
 
         self.conv = nn.Sequential(
             Conv2dBNReLU(in_channels, out_channels, kernel_size=1, bias=False),
-            Conv2dBNReLU(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            Conv2dBNReLU(out_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False),
             Conv2dBN(out_channels, out_channels*self.expansion, kernel_size=1, bias=False)
         )
 
     def forward(self, x):
-        if self.res_connection:
-            return F.relu(self.conv(x) + x)
+        if self.need_downsample:
+            return F.relu(self.conv(x) + self.downsample(x))
         else:
-            return F.relu(self.conv(x))
+            return F.relu(self.conv(x) + x)
 
 
 class ResNet(nn.Module):
@@ -144,7 +147,8 @@ class ResNet(nn.Module):
         for n in self.cfg:
             for i in range(n):
                 stride = 2 if i == 0 and in_channels != 64 else 1
-                layers.append(self.block(in_channels*self.block.expansion, out_channels, stride))
+                expansion = 1 if i == 0 and in_channels == out_channels else self.block.expansion
+                layers.append(self.block(in_channels*expansion, out_channels, stride))
                 in_channels = out_channels
             out_channels *= 2
         return nn.Sequential(*layers)

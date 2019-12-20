@@ -44,10 +44,10 @@ class DOLinear(nn.Sequential):
         )
 
 
-class InceptionBlock(nn.Module):
+class InceptionBlockV1(nn.Module):
 
     def __init__(self, in_channels, ch1x1, ch3x3red, ch3x3, ch5x5red, ch5x5, pool_proj):
-        super(InceptionBlock, self).__init__()
+        super(InceptionBlockV1, self).__init__()
         self.branch1 = Conv2dBNReLU(in_channels, ch1x1, kernel_size=1)
 
         self.branch2 = nn.Sequential(
@@ -58,6 +58,64 @@ class InceptionBlock(nn.Module):
         self.branch3 = nn.Sequential(
             Conv2dBNReLU(in_channels, ch5x5red, kernel_size=1),
             Conv2dBNReLU(ch5x5red, ch5x5, kernel_size=5, padding=2)
+        )
+
+        self.branch4 = nn.Sequential(
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1, ceil_mode=True),
+            Conv2dBNReLU(in_channels, pool_proj, kernel_size=1)
+        )
+
+
+class InceptionBlockV2(nn.Module):
+
+    def __init__(self, in_channels, ch1x1, ch3x3red, ch3x3, ch5x5red, ch5x5, pool_proj):
+        super(InceptionBlockV2, self).__init__()
+        self.branch1 = Conv2dBNReLU(in_channels, ch1x1, kernel_size=1)
+
+        self.branch2 = nn.Sequential(
+            Conv2dBNReLU(in_channels, ch3x3red, kernel_size=1),
+            Conv2dBNReLU(ch3x3red, ch3x3, kernel_size=3, padding=1)
+        )
+
+        self.branch3 = nn.Sequential(
+            Conv2dBNReLU(in_channels, ch5x5red, kernel_size=1),
+            Conv2dBNReLU(ch5x5red, ch5x5, kernel_size=3, padding=1),
+            Conv2dBNReLU(ch5x5, ch5x5, kernel_size=3, padding=1)
+        )
+
+        self.branch4 = nn.Sequential(
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=1, ceil_mode=True),
+            Conv2dBNReLU(in_channels, pool_proj, kernel_size=1)
+        )
+
+    def forward(self, x):
+        branch1 = self.branch1(x)
+        branch2 = self.branch2(x)
+        branch3 = self.branch3(x)
+        branch4 = self.branch4(x)
+
+        outputs = [branch1, branch2, branch3, branch4]
+        return torch.cat(outputs, dim=1)
+
+
+class InceptionBlockV3(nn.Module):
+
+    def __init__(self, in_channels, ch1x1, ch3x3red, ch3x3, ch5x5red, ch5x5, pool_proj):
+        super(InceptionBlockV3, self).__init__()
+        self.branch1 = Conv2dBNReLU(in_channels, ch1x1, kernel_size=1)
+
+        self.branch2 = nn.Sequential(
+            Conv2dBNReLU(in_channels, ch3x3red, kernel_size=1),
+            Conv2dBNReLU(ch3x3red, ch3x3, kernel_size=(1, 3), padding=1),
+            Conv2dBNReLU(ch3x3, ch3x3, kernel_size=(3, 1), padding=1)
+        )
+
+        self.branch3 = nn.Sequential(
+            Conv2dBNReLU(in_channels, ch5x5red, kernel_size=1),
+            Conv2dBNReLU(ch5x5red, ch5x5, kernel_size=(1, 3), padding=1),
+            Conv2dBNReLU(ch5x5, ch5x5, kernel_size=(3, 1), padding=1),
+            Conv2dBNReLU(ch5x5, ch5x5, kernel_size=(1, 3), padding=1),
+            Conv2dBNReLU(ch5x5, ch5x5, kernel_size=(3, 1), padding=1)
         )
 
         self.branch4 = nn.Sequential(
@@ -124,8 +182,17 @@ class AuxClassifier(nn.Module):
 
 class GoogleNet(nn.Module):
 
-    def __init__(self, in_channels=3, classes=1000):
+    def __init__(self, in_channels=3, classes=1000, ver=1):
         super(GoogleNet, self).__init__()
+
+        if ver == 1:
+            block = InceptionBlockV1
+        elif ver == 2:
+            block = InceptionBlockV2
+        elif ver == 3:
+            block = InceptionBlockV3
+        else:
+            raise ValueError('Version must be 1/2/3')
 
         self.stem = nn.Sequential(
             Conv2dBNReLU(in_channels, 64, kernel_size=7, stride=2, padding=3),
@@ -135,21 +202,21 @@ class GoogleNet(nn.Module):
             nn.MaxPool2d(3, stride=2, ceil_mode=True),
         )
 
-        self.inception_1a = InceptionBlock(192, 64, 96, 128, 16, 32, 32)
-        self.inception_1b = InceptionBlock(256, 128, 128, 192, 32, 96, 64)
+        self.inception_1a = block(192, 64, 96, 128, 16, 32, 32)
+        self.inception_1b = block(256, 128, 128, 192, 32, 96, 64)
 
         self.pool_1 = nn.MaxPool2d(3, stride=2, ceil_mode=True)
 
-        self.inception_2a = InceptionBlock(480, 192, 96, 208, 16, 48, 64)
-        self.inception_2b = InceptionBlock(512, 160, 112, 224, 24, 64, 64)
-        self.inception_2c = InceptionBlock(512, 128, 128, 256, 24, 64, 64)
-        self.inception_2d = InceptionBlock(512, 112, 144, 288, 32, 64, 64)
-        self.inception_2e = InceptionBlock(528, 256, 160, 320, 32, 128, 128)
+        self.inception_2a = block(480, 192, 96, 208, 16, 48, 64)
+        self.inception_2b = block(512, 160, 112, 224, 24, 64, 64)
+        self.inception_2c = block(512, 128, 128, 256, 24, 64, 64)
+        self.inception_2d = block(512, 112, 144, 288, 32, 64, 64)
+        self.inception_2e = block(528, 256, 160, 320, 32, 128, 128)
 
         self.pool_2 = nn.MaxPool2d(3, stride=2, ceil_mode=True)
 
-        self.inception_3a = InceptionBlock(832, 256, 160, 320, 32, 128, 128)
-        self.inception_3b = InceptionBlock(832, 384, 192, 384, 48, 128, 128)
+        self.inception_3a = block(832, 256, 160, 320, 32, 128, 128)
+        self.inception_3b = block(832, 384, 192, 384, 48, 128, 128)
 
         self.classifier = Classifier(1024, classes)
 

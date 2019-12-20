@@ -40,6 +40,8 @@ VOC2012_CLASSES = [
 
 def voc_classification_transforms(img, target, object_num):
     objs = target['annotation']['object']
+    width = int(target['annotation']['size']['width'])
+    height = int(target['annotation']['size']['height'])
     if not isinstance(objs, list):
         objs = [objs]
     obj = objs[object_num-1 if object_num > 0 else object_num]
@@ -48,7 +50,10 @@ def voc_classification_transforms(img, target, object_num):
     ymin = int(obj['bndbox']['ymin'])
     xmax = int(obj['bndbox']['xmax'])
     ymax = int(obj['bndbox']['ymax'])
-    transformed_img = img.crop((xmin, ymin, xmax, ymax))
+    xc = (xmax + xmin) / 2
+    yc = (ymax + ymin) / 2
+    size = min(max(xmax - xmin, ymax - ymin), width, height)
+    transformed_img = img.crop((xc - size//2, yc - size//2, xc + size//2, yc + size//2))
     return transformed_img, transformed_target
 
 

@@ -6,6 +6,7 @@ from alexnet import AlexNet
 from resnet import ResNet
 from mnistnet import MNISTNet
 from googlenet import GoogleNet
+from fpn_resnet import fpn_resnet18
 
 from mnist_utils import MNIST_CLASSES, MNIST_DATASET
 from fashion_mnist_utils import FASHION_MNIST_CLASSES, FASHION_MNIST_DATASET
@@ -26,7 +27,7 @@ def main():
     origin_channels = 3
     in_channels = 3
     size = (224, 224)
-    batch_size = 10
+    batch_size = 100
     classes = 20
     class_names = VOC2012_CLASSES
     root = '../../datasets'
@@ -54,9 +55,10 @@ def main():
     # net = VGG(in_channels=in_channels, classes=classes, cfg='A')
     # net = MobileNet(width_multiplier=1.0, in_channels=in_channels, classes=classes)
     # net = MobileNetV2(width_multiplier=1.0, in_channels=in_channels, classes=classes)
-    net = ResNet(in_channels=in_channels, classes=classes, cfg='18')
+    # net = ResNet(in_channels=in_channels, classes=classes, cfg='18')
     # net = MNISTNet(in_channels=in_channels, classes=classes)
     # net = GoogleNet(in_channels=in_channels, classes=classes, ver=2)
+    net = fpn_resnet18(classes=classes, pretrained=True)
 
     print(net)
 
@@ -69,9 +71,6 @@ def main():
     logdir = os.path.join("logs", datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     # os.makedirs(logdir)
     logger = TensorBoardLogger(logdir, class_names=class_names, testloader=testloader, device=device)
-    images, targets = next(iter(trainloader))
-    fig = make_image_label_figure(images, targets, VOC2012_CLASSES)
-    logger.add_figure('example', fig)
     trainer = PyTorchTrainer(device=device, epoch_callback=logger.epoch_callback, batch_callback=logger.batch_callback)
     trainer.train(net, optimizer, criterion, trainloader, valloader, logdir, scheduler=scheduler, epochs=10)
 

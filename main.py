@@ -6,7 +6,7 @@ from alexnet import AlexNet
 from resnet import ResNet
 from mnistnet import MNISTNet
 from googlenet import GoogleNet
-from fpn_resnet import fpn_resnet18
+from fpn_resnet import fpn_resnet18, fpn_resnet34, fpn_resnet50
 
 from mnist_utils import MNIST_CLASSES, MNIST_DATASET
 from fashion_mnist_utils import FASHION_MNIST_CLASSES, FASHION_MNIST_DATASET
@@ -27,7 +27,7 @@ def main():
     origin_channels = 3
     in_channels = 3
     size = (224, 224)
-    batch_size = 100
+    batch_size = 128
     classes = 20
     class_names = VOC2012_CLASSES
     root = '../../datasets'
@@ -58,13 +58,14 @@ def main():
     # net = ResNet(in_channels=in_channels, classes=classes, cfg='18')
     # net = MNISTNet(in_channels=in_channels, classes=classes)
     # net = GoogleNet(in_channels=in_channels, classes=classes, ver=2)
-    net = fpn_resnet18(classes=classes, pretrained=True)
+    net = fpn_resnet18(classes=classes, pretrained=True, freeze=True)
+    # net = fpn_resnet34(classes=classes, pretrained=True)
 
     print(net)
 
     net = net.to(torch.device(device))
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(net.parameters(), lr=0.005, weight_decay=0.0001)
+    optimizer = optim.Adam(net.parameters(), lr=0.0001, weight_decay=0.001)
     scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.25, patience=2, verbose=False, mode='min',
                                                threshold=0.0001, cooldown=0, min_lr=0.00001)
 

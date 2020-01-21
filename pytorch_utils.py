@@ -212,10 +212,11 @@ class PyTorchTrainer(object):
         self.epoch_train_pb = None
         self.epoch_val_pb = None
 
-    def train(self, model, optimizer, loss_criterion, train_data_loader, val_data_loader, path, scheduler=None,
+    def train(self, model, optimizer, loss_criterion, train_data_loader, val_data_loader, path=None, scheduler=None,
               epochs=10):
-        models_path = os.path.join(path, "models")
-        os.mkdir(models_path)
+        models_path = None if path is None else os.path.join(path, "models")
+        if models_path is not None:
+            os.mkdir(models_path)
         # Print log
         print(f"=============================== Training NN ===============================")
         print(f"== Epochs:              {epochs:6d}")
@@ -242,7 +243,8 @@ class PyTorchTrainer(object):
             val_loss, val_metrics_dict = self.forward_batches(model, optimizer, loss_criterion,
                                                               val_data_loader, epoch, train=False)
             # Save model
-            torch.save(model.state_dict(), os.path.join(models_path, f"model_epoch_{epoch+1}.pt"))
+            if models_path is not None:
+                torch.save(model.state_dict(), os.path.join(models_path, f"model_epoch_{epoch+1}.pt"))
             # Make scheduler step
             if scheduler:
                 if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
